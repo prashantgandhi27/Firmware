@@ -36,10 +36,10 @@
  * Entry point for syslink module used to communicate with the NRF module on a Crazyflie
  */
 
-#include <px4_config.h>
-#include <px4_tasks.h>
-#include <px4_posix.h>
-#include <px4_defines.h>
+#include <px4_platform_common/px4_config.h>
+#include <px4_platform_common/tasks.h>
+#include <px4_platform_common/posix.h>
+#include <px4_platform_common/defines.h>
 
 #include <unistd.h>
 #include <stdio.h>
@@ -57,10 +57,6 @@
 #include <drivers/drv_board_led.h>
 
 #include <systemlib/err.h>
-
-#include <uORB/topics/parameter_update.h>
-#include <uORB/topics/battery_status.h>
-#include <uORB/topics/input_rc.h>
 
 #include <board_config.h>
 
@@ -100,9 +96,6 @@ Syslink::Syslink() :
 	_fd(0),
 	_queue(2, sizeof(syslink_message_t)),
 	_writebuffer(16, sizeof(crtp_message_t)),
-	_battery_pub(nullptr),
-	_rc_pub(nullptr),
-	_cmd_pub(nullptr),
 	_rssi(RC_INPUT_RSSI_MAX),
 	_bstate(BAT_DISCHARGING)
 {
@@ -226,8 +219,6 @@ Syslink::update_params(bool force_set)
 		this->_params_update[2] = t;
 		this->_params_ack[2] = 0;
 	}
-
-
 }
 
 // 1M 8N1 serial connection to NRF51
@@ -294,9 +285,6 @@ Syslink::task_main()
 
 	_memory = new SyslinkMemory(this);
 	_memory->init();
-
-	_battery.reset(&_battery_status);
-
 
 	//	int ret;
 
@@ -370,7 +358,7 @@ Syslink::task_main()
 			}
 
 			if (fds[1].revents & POLLIN) {
-				struct parameter_update_s update;
+				parameter_update_s update;
 				orb_copy(ORB_ID(parameter_update), _params_sub, &update);
 				update_params(false);
 			}
@@ -379,7 +367,6 @@ Syslink::task_main()
 	}
 
 	close(_fd);
-
 }
 
 void
@@ -418,7 +405,8 @@ Syslink::handle_message(syslink_message_t *msg)
 		memcpy(&vbat, &msg->data[1], sizeof(float));
 		//memcpy(&iset, &msg->data[5], sizeof(float));
 
-		_battery.updateBatteryStatus(t, vbat, -1, true, true, 0, 0, false, &_battery_status);
+		_battery.updateBatteryStatus(t, vbat, -1, true,
+					     battery_status_s::BATTERY_SOURCE_POWER_MODULE, 0, 0);
 
 
 		// Update battery charge state
@@ -427,20 +415,11 @@ Syslink::handle_message(syslink_message_t *msg)
 		}
 
 		/* With the usb plugged in and battery disconnected, it appears to be charged. The voltage check ensures that a battery is connected  */
-		else if (powered && !charging && _battery_status.voltage_filtered_v > 3.7f) {
+		else if (powered && !charging && vbat > 3.7f) {
 			_bstate = BAT_CHARGED;
 
 		} else {
 			_bstate = BAT_DISCHARGING;
-		}
-
-
-		// announce the battery status if needed, just publish else
-		if (_battery_pub != nullptr) {
-			orb_publish(ORB_ID(battery_status), _battery_pub, &_battery_status);
-
-		} else {
-			_battery_pub = orb_advertise(ORB_ID(battery_status), &_battery_status);
 		}
 
 	} else if (msg->type == SYSLINK_RADIO_RSSI) {
@@ -459,7 +438,7 @@ Syslink::handle_message(syslink_message_t *msg)
 		px4_sem_post(&memory_sem);
 
 	} else {
-		PX4_INFO("GOT %d", msg->type);
+		PX4_INFO("GOT %" PRIu8, msg->type);
 	}
 
 	//Send queued messages
@@ -512,7 +491,6 @@ Syslink::handle_message(syslink_message_t *msg)
 	} else if (_params_ack[2] == 0 && t - _params_update[2] > 10000) {
 		set_address(_addr);
 	}
-
 }
 
 void
@@ -530,7 +508,6 @@ Syslink::handle_radio(syslink_message_t *sys)
 	} else if (sys->type == SYSLINK_RADIO_ADDRESS) {
 		_params_ack[2] = t;
 	}
-
 }
 
 void
@@ -572,12 +549,7 @@ Syslink::handle_raw(syslink_message_t *sys)
 		rc.values[3] = cmd->thrust * 1000 / USHRT_MAX + 1000;
 		rc.values[4] = 1000; // Dummy channel as px4 needs at least 5
 
-		if (_rc_pub == nullptr) {
-			_rc_pub = orb_advertise(ORB_ID(input_rc), &rc);
-
-		} else {
-			orb_publish(ORB_ID(input_rc), _rc_pub, &rc);
-		}
+		_rc_pub.publish(rc);
 
 	} else if (c->port == CRTP_PORT_MAVLINK) {
 		_count_in++;
@@ -622,7 +594,6 @@ Syslink::handle_bootloader(syslink_message_t *sys)
 		c->data[22] = 0x10; // Protocol version
 		send_message(sys);
 	}
-
 }
 
 void
@@ -635,7 +606,7 @@ Syslink::handle_raw_other(syslink_message_t *sys)
 
 	if (c->port == CRTP_PORT_LOG) {
 
-		PX4_INFO("Log: %d %d", c->channel, c->data[0]);
+		PX4_INFO("Log: %" PRIu8 " %" PRIu8, c->channel, c->data[0]);
 
 		if (c->channel == 0) { // Table of Contents Access
 
@@ -658,7 +629,7 @@ Syslink::handle_raw_other(syslink_message_t *sys)
 
 			uint8_t cmd = c->data[0];
 
-			PX4_INFO("Responding to cmd: %d", cmd);
+			PX4_INFO("Responding to cmd: %" PRIu8, cmd);
 			c->data[2] = 0; // Success
 			c->size = 3 + 1;
 
@@ -699,7 +670,7 @@ Syslink::handle_raw_other(syslink_message_t *sys)
 		}
 
 	} else {
-		PX4_INFO("Got raw: %d", c->port);
+		PX4_INFO("Got raw: %" PRIu8, c->port);
 	}
 }
 
@@ -798,13 +769,13 @@ void status()
 		printf("%i: ROM ID: ", i);
 
 		for (int idi = 0; idi < idlen; idi++) {
-			printf("%02X", id[idi]);
+			printf("%02" PRIX8, id[idi]);
 		}
 
 		deck_descriptor_t desc;
 		read(deckfd, &desc, sizeof(desc));
 
-		printf(", VID: %02X , PID: %02X\n", desc.header, desc.vendorId, desc.productId);
+		printf("HDR:%02" PRIx8 ", VID: %02" PRIx8 " , PID: %02" PRIx8 "\n", desc.header, desc.vendorId, desc.productId);
 
 		// Print pages of memory
 		for (size_t di = 0; di < sizeof(desc); di++) {
@@ -812,12 +783,11 @@ void status()
 				printf("\n");
 			}
 
-			printf("%02X ", ((uint8_t *)&desc)[di]);
+			printf("%02" PRIX8 " ", ((uint8_t *)&desc)[di]);
 
 		}
 
 		printf("\n\n");
-
 	}
 
 	close(deckfd);
@@ -847,20 +817,13 @@ void attached(int pid)
 	exit(found ? 1 : 0);
 }
 
-
-
 void test()
 {
 	// TODO: Ensure battery messages are recent
 	// TODO: Read and write from memory to ensure it is working
 }
 
-
-
-
-}
-
-
+} // namespace syslink
 
 int syslink_main(int argc, char *argv[])
 {
@@ -868,7 +831,6 @@ int syslink_main(int argc, char *argv[])
 		syslink::usage();
 		exit(1);
 	}
-
 
 	const char *verb = argv[1];
 
@@ -892,9 +854,6 @@ int syslink_main(int argc, char *argv[])
 	if (!strcmp(verb, "test")) {
 		syslink::test();
 	}
-
-
-
 
 	syslink::usage();
 	exit(1);

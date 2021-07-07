@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- *   Copyright (c) 2013, 2014, 2017 PX4 Development Team. All rights reserved.
+ *   Copyright (c) 2013, 2014, 2017, 2021 PX4 Development Team. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -37,16 +37,17 @@
  * PWM servo output configuration and monitoring tool.
  */
 
-#include <px4_config.h>
-#include <px4_tasks.h>
-#include <px4_posix.h>
-#include <px4_getopt.h>
-#include <px4_defines.h>
-#include <px4_log.h>
-#include <px4_module.h>
-#include <px4_cli.h>
+#include <px4_platform_common/px4_config.h>
+#include <px4_platform_common/tasks.h>
+#include <px4_platform_common/posix.h>
+#include <px4_platform_common/getopt.h>
+#include <px4_platform_common/defines.h>
+#include <px4_platform_common/log.h>
+#include <px4_platform_common/module.h>
+#include <px4_platform_common/cli.h>
 
 #include <stdio.h>
+#include <inttypes.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
@@ -59,8 +60,6 @@
 #ifdef __PX4_NUTTX
 #include <nuttx/fs/ioctl.h>
 #endif
-
-#include <arch/board/board.h>
 
 #include "systemlib/err.h"
 #include <parameters/param.h>
@@ -87,14 +86,14 @@ This command is used to configure PWM outputs for servo and ESC control.
 The default device `/dev/pwm_output0` are the Main channels, AUX channels are on `/dev/pwm_output1` (`-d` parameter).
 
 It is used in the startup script to make sure the PWM parameters (`PWM_*`) are applied (or the ones provided
-by the airframe config if specified). `pwm info` shows the current settings (the trim value is an offset
+by the airframe config if specified). `pwm status` shows the current settings (the trim value is an offset
 and configured with `PWM_MAIN_TRIMx` and `PWM_AUX_TRIMx`).
 
 The disarmed value should be set such that the motors don't spin (it's also used for the kill switch), at the
 minimum value they should spin.
 
 Channels are assigned to a group. Due to hardware limitations, the update rate can only be set per group. Use
-`pwm info` to display the groups. If the `-c` argument is used, all channels of any included group must be included.
+`pwm status` to display the groups. If the `-c` argument is used, all channels of any included group must be included.
 
 The parameters `-p` and `-r` can be set to a parameter instead of specifying an integer: use -p p:PWM_MIN for example.
 
@@ -115,7 +114,7 @@ $ pwm test -c 13 -p 1200
 	PRINT_MODULE_USAGE_COMMAND_DESCR("arm", "Arm output");
 	PRINT_MODULE_USAGE_COMMAND_DESCR("disarm", "Disarm output");
 
-	PRINT_MODULE_USAGE_COMMAND_DESCR("info", "Print current configuration of all channels");
+	PRINT_MODULE_USAGE_COMMAND_DESCR("status", "Print current configuration of all channels");
 	PRINT_MODULE_USAGE_COMMAND_DESCR("forcefail", "Force Failsafe mode. "
                                          "PWM outputs are set to failsafe values.");
 	PRINT_MODULE_USAGE_ARG("on|off", "Turn on or off", false);
@@ -146,7 +145,7 @@ $ pwm test -c 13 -p 1200
 	PRINT_MODULE_USAGE_PARAM_STRING('c', nullptr, nullptr, "select channels in the form: 1234 (1 digit per channel, 1=first)",
 					true);
 	PRINT_MODULE_USAGE_PARAM_INT('m', -1, 0, 4096, "Select channels via bitmask (eg. 0xF, 3)", true);
-	PRINT_MODULE_USAGE_PARAM_INT('g', -1, 0, 10, "Select channels by group (eg. 0, 1, 2. use 'pwm info' to show groups)",
+	PRINT_MODULE_USAGE_PARAM_INT('g', -1, 0, 10, "Select channels by group (eg. 0, 1, 2. use 'pwm status' to show groups)",
 				     true);
 	PRINT_MODULE_USAGE_PARAM_FLAG('a', "Select all channels", true);
 
@@ -281,7 +280,7 @@ pwm_main(int argc, char *argv[])
 
 		for (unsigned i = 0; i < PWM_OUTPUT_MAX_CHANNELS; i++) {
 			if (set_mask & 1 << i) {
-				printf("%d ", i + 1);
+				printf("%u ", i + 1);
 			}
 		}
 
@@ -415,9 +414,7 @@ pwm_main(int argc, char *argv[])
 			return 1;
 		}
 
-		struct pwm_output_values pwm_values;
-
-		memset(&pwm_values, 0, sizeof(pwm_values));
+		struct pwm_output_values pwm_values {};
 
 		pwm_values.channel_count = servo_count;
 
@@ -471,9 +468,7 @@ pwm_main(int argc, char *argv[])
 			return 1;
 		}
 
-		struct pwm_output_values pwm_values;
-
-		memset(&pwm_values, 0, sizeof(pwm_values));
+		struct pwm_output_values pwm_values {};
 
 		pwm_values.channel_count = servo_count;
 
@@ -526,9 +521,7 @@ pwm_main(int argc, char *argv[])
 			PX4_WARN("reading disarmed value of zero, disabling disarmed PWM");
 		}
 
-		struct pwm_output_values pwm_values;
-
-		memset(&pwm_values, 0, sizeof(pwm_values));
+		struct pwm_output_values pwm_values {};
 
 		pwm_values.channel_count = servo_count;
 
@@ -582,9 +575,7 @@ pwm_main(int argc, char *argv[])
 			return 1;
 		}
 
-		struct pwm_output_values pwm_values;
-
-		memset(&pwm_values, 0, sizeof(pwm_values));
+		struct pwm_output_values pwm_values {};
 
 		pwm_values.channel_count = servo_count;
 
@@ -853,7 +844,7 @@ err_out_no_test:
 		goto err_out;
 
 
-	} else if (!strcmp(command, "info")) {
+	} else if (!strcmp(command, "status") || !strcmp(command, "info")) {
 
 		printf("device: %s\n", dev);
 
@@ -934,17 +925,17 @@ err_out_no_test:
 			ret = px4_ioctl(fd, PWM_SERVO_GET(i), (unsigned long)&spos);
 
 			if (ret == OK) {
-				printf("channel %u: %u us", i + 1, spos);
+				printf("channel %u: %" PRIu16 " us", i + 1, spos);
 
 				if (info_alt_rate_mask & (1 << i)) {
-					printf(" (alternative rate: %d Hz", info_alt_rate);
+					printf(" (alternative rate: %" PRIu32 " Hz", info_alt_rate);
 
 				} else {
-					printf(" (default rate: %d Hz", info_default_rate);
+					printf(" (default rate: %" PRIu32 " Hz", info_default_rate);
 				}
 
 
-				printf(" failsafe: %d, disarmed: %d us, min: %d us, max: %d us, trim: %5.2f)",
+				printf(" failsafe: %d, disarmed: %" PRIu16 " us, min: %" PRIu16 " us, max: %" PRIu16 " us, trim: %5.2f)",
 				       failsafe_pwm.values[i], disarmed_pwm.values[i], min_pwm.values[i], max_pwm.values[i],
 				       (double)((int16_t)(trim_pwm.values[i]) / 10000.0f));
 				printf("\n");

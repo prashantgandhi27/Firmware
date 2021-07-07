@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- *   Copyright (c) 2018 PX4 Development Team. All rights reserved.
+ *   Copyright (c) 2018, 2021 PX4 Development Team. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -49,7 +49,9 @@
 #include <nuttx/config.h>
 #include <board_config.h>
 
+#include <inttypes.h>
 #include <stdbool.h>
+#include <syslog.h>
 
 #include "systemlib/px4_macros.h"
 
@@ -71,8 +73,28 @@ static const px4_hw_mft_item_t device_unsupported = {0, 0, 0};
 // List of components on a specific board configuration
 // The index of those components is given by the enum (px4_hw_mft_item_id_t)
 // declared in board_common.h
+
 static const px4_hw_mft_item_t hw_mft_list_v0500[] = {
 	{
+		//  PX4_MFT_PX4IO
+		.present     = 1,
+		.mandatory   = 1,
+		.connection  = px4_hw_con_onboard,
+	},
+	{
+		// PX4_MFT_USB
+		.present     = 1,
+		.mandatory   = 1,
+		.connection  = px4_hw_con_onboard,
+	},
+	{
+		// PX4_MFT_CAN2
+		.present     = 1,
+		.mandatory   = 1,
+		.connection  = px4_hw_con_onboard,
+	},
+	{
+		// PX4_MFT_CAN3
 		.present     = 1,
 		.mandatory   = 1,
 		.connection  = px4_hw_con_onboard,
@@ -81,20 +103,66 @@ static const px4_hw_mft_item_t hw_mft_list_v0500[] = {
 
 static const px4_hw_mft_item_t hw_mft_list_v0540[] = {
 	{
+		//  PX4_MFT_PX4IO
+		.present     = 0,
+		.mandatory   = 0,
+		.connection  = px4_hw_con_unknown,
+	},
+	{
+		// PX4_MFT_USB
+		.present     = 1,
+		.mandatory   = 1,
+		.connection  = px4_hw_con_onboard,
+	},
+	{
+		// PX4_MFT_CAN2
+		.present     = 0,
+		.mandatory   = 0,
+		.connection  = px4_hw_con_unknown,
+	},
+	{
+		// PX4_MFT_CAN3
 		.present     = 0,
 		.mandatory   = 0,
 		.connection  = px4_hw_con_unknown,
 	},
 };
 
-static px4_hw_mft_list_entry_t mft_lists[] = {
-	{0x0000, hw_mft_list_v0500, arraySize(hw_mft_list_v0500)},
-	{0x0105, hw_mft_list_v0500, arraySize(hw_mft_list_v0500)}, // Alias for CUAV V5 R:5 V:1
-	{0x0500, hw_mft_list_v0500, arraySize(hw_mft_list_v0500)}, // Alias for CUAV V5+ R:0 V:5
-	{0x0400, hw_mft_list_v0540, arraySize(hw_mft_list_v0540)},
-	{0x0600, hw_mft_list_v0540, arraySize(hw_mft_list_v0540)}, // Alias for CUAV V5nano R:0 V:6
+static const px4_hw_mft_item_t hw_mft_list_v0600[] = {
+	{
+		//  PX4_MFT_PX4IO
+		.present     = 0,
+		.mandatory   = 0,
+		.connection  = px4_hw_con_unknown,
+	},
+	{
+		// PX4_MFT_USB
+		.present     = 1,
+		.mandatory   = 1,
+		.connection  = px4_hw_con_onboard,
+	},
+	{
+		// PX4_MFT_CAN2
+		.present     = 1,
+		.mandatory   = 1,
+		.connection  = px4_hw_con_onboard,
+	},
+	{
+		// PX4_MFT_CAN3
+		.present     = 0,
+		.mandatory   = 0,
+		.connection  = px4_hw_con_unknown,
+	},
 };
 
+
+static px4_hw_mft_list_entry_t mft_lists[] = {
+	{0x0000, hw_mft_list_v0500,        arraySize(hw_mft_list_v0500)},
+	{0x0105, hw_mft_list_v0500,        arraySize(hw_mft_list_v0500)},  // Alias for CUAV V5 R:5 V:1
+	{0x0500, hw_mft_list_v0500,        arraySize(hw_mft_list_v0500)},  // Alias for CUAV V5+ R:0 V:5
+	{0x0400, hw_mft_list_v0540,        arraySize(hw_mft_list_v0540)},  // HolyBro mini no can 2,3
+	{0x0600, hw_mft_list_v0600,        arraySize(hw_mft_list_v0600)},  // CUAV V5nano R:0 V:6 with can 2
+};
 
 /************************************************************************************
  * Name: board_query_manifest
@@ -127,7 +195,7 @@ __EXPORT px4_hw_mft_item board_query_manifest(px4_hw_mft_item_id_t id)
 		}
 
 		if (boards_manifest == px4_hw_mft_list_uninitialized) {
-			syslog(LOG_ERR, "[boot] Board %4x is not supported!\n", ver_rev);
+			syslog(LOG_ERR, "[boot] Board %4"  PRIx32 " is not supported!\n", ver_rev);
 		}
 	}
 

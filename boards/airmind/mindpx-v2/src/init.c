@@ -45,14 +45,15 @@
  * Included Files
  ****************************************************************************/
 
-#include <px4_config.h>
-#include <px4_tasks.h>
+#include <px4_platform_common/px4_config.h>
+#include <px4_platform_common/tasks.h>
 
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
 #include <debug.h>
 #include <errno.h>
+#include <syslog.h>
 
 #include <nuttx/board.h>
 #include <nuttx/spi/spi.h>
@@ -71,15 +72,17 @@
 #include <drivers/drv_hrt.h>
 #include <drivers/drv_board_led.h>
 
-#include <px4_init.h>
-#include <drivers/boards/common/board_dma_alloc.h>
+#include <px4_platform_common/init.h>
+#include <px4_platform/board_dma_alloc.h>
+#include <drivers/drv_pwm_output.h>
+#include <px4_arch/io_timer.h>
 
 /****************************************************************************
  * Pre-Processor Definitions
  ****************************************************************************/
 
 /*
- * Ideally we'd be able to get these from up_internal.h,
+ * Ideally we'd be able to get these from arm_internal.h,
  * but since we want to be able to disable the NuttX use
  * of leds for system indication at will and there is no
  * separate switch, we need to build independent of the
@@ -91,9 +94,6 @@ extern void led_on(int led);
 extern void led_off(int led);
 __END_DECLS
 
-/****************************************************************************
- * Protected Functions
- ****************************************************************************/
 /************************************************************************************
  * Name: board_on_reset
  *
@@ -108,14 +108,9 @@ __END_DECLS
 __EXPORT void board_on_reset(int status)
 {
 	/* configure the GPIO pins to outputs and keep them low */
-	stm32_configgpio(GPIO_GPIO0_OUTPUT);
-	stm32_configgpio(GPIO_GPIO1_OUTPUT);
-	stm32_configgpio(GPIO_GPIO2_OUTPUT);
-	stm32_configgpio(GPIO_GPIO3_OUTPUT);
-	stm32_configgpio(GPIO_GPIO4_OUTPUT);
-	stm32_configgpio(GPIO_GPIO5_OUTPUT);
-	stm32_configgpio(GPIO_GPIO6_OUTPUT);
-	stm32_configgpio(GPIO_GPIO7_OUTPUT);
+	for (int i = 0; i < DIRECT_PWM_OUTPUT_CHANNELS; ++i) {
+		px4_arch_configgpio(io_timer_channel_get_gpio_output(i));
+	}
 
 	/**
 	 * On resets invoked from system (not boot) insure we establish a low
@@ -262,10 +257,6 @@ __EXPORT int board_app_initialize(uintptr_t arg)
 	SPI_SETFREQUENCY(spi4, 10000000);
 	SPI_SETBITS(spi4, 8);
 	SPI_SETMODE(spi4, SPIDEV_MODE3);
-	SPI_SELECT(spi4, PX4_SPIDEV_GYRO, false);
-	SPI_SELECT(spi4, PX4_SPIDEV_ACCEL_MAG, false);
-	SPI_SELECT(spi4, PX4_SPIDEV_BARO, false);
-	SPI_SELECT(spi4, PX4_SPIDEV_MPU, false);
 	up_udelay(20);
 
 	/* Get the SPI port for the FRAM */
@@ -284,8 +275,6 @@ __EXPORT int board_app_initialize(uintptr_t arg)
 	// XXX start with 10.4 MHz in FRAM usage and go up to 37.5 once validated
 	SPI_SETFREQUENCY(spi1, 24 * 1000 * 1000);
 	SPI_SETBITS(spi1, 8);
-	SPI_SETMODE(spi1, SPIDEV_MODE3);
-	SPI_SELECT(spi1, SPIDEV_FLASH(0), false);
 
 
 	spi2 = px4_spibus_initialize(2);
@@ -293,8 +282,6 @@ __EXPORT int board_app_initialize(uintptr_t arg)
 	/* Default SPI2 to 10MHz and de-assert the known chip selects. */
 	SPI_SETFREQUENCY(spi2, 10000000);
 	SPI_SETBITS(spi2, 8);
-	SPI_SETMODE(spi2, SPIDEV_MODE3);
-	SPI_SELECT(spi2, PX4_SPIDEV_EXT0, false);
 
 
 #ifdef CONFIG_MMCSD
@@ -320,6 +307,10 @@ __EXPORT int board_app_initialize(uintptr_t arg)
 	sdio_mediachange(sdio, true);
 
 #endif
+
+	/* Configure the HW based on the manifest */
+
+	px4_platform_configure();
 
 	return OK;
 }
